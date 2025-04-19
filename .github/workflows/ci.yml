@@ -1,0 +1,633 @@
+name: ci
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+on:
+  schedule:
+    - cron: '0 10 * * *'
+  push:
+    branches:
+      - 'master'
+      - 'releases/v*'
+    tags:
+      - 'v*.*.*'
+  pull_request:
+
+env:
+  DOCKER_IMAGE: localhost:5000/name/app
+  BUILDX_VERSION: latest
+
+jobs:
+  context:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        context:
+          - workflow
+          - git
+    steps:
+      -
+        name: Checkout
+        uses: actions/checkout@v4
+      -
+        name: Docker meta
+        uses: ./
+        with:
+          context: ${{ matrix.context }}
+
+  multi-images:
+    runs-on: ubuntu-latest
+    steps:
+      -
+        name: Checkout
+        uses: actions/checkout@v4
+      -
+        name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          version: ${{ env.BUILDX_VERSION }}
+          driver: docker
+      -
+        name: Docker meta
+        uses: ./
+        with:
+          images: |
+            ${{ env.DOCKER_IMAGE }}
+            ghcr.io/name/app
+          tags: |
+            type=schedule
+            type=ref,event=branch
+            type=ref,event=tag
+            type=ref,event=pr
+            type=sha
+      -
+        name: Print envs
+        run: env|sort
+
+  tag-schedule:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        tag-schedule:
+          - ""
+          - "cron-{{date 'YYYYMMDD'}}"
+          - "{{date 'YYYYMMDD-HHmmss'}}"
+          - "schedule"
+    steps:
+      -
+        name: Checkout
+        uses: actions/checkout@v4
+      -
+        name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          version: ${{ env.BUILDX_VERSION }}
+          driver: docker
+      -
+        name: Docker meta
+        uses: ./
+        with:
+          images: |
+            ${{ env.DOCKER_IMAGE }}
+            ghcr.io/name/app
+          tags: |
+            type=schedule,pattern=${{ matrix.tag-schedule }}
+            type=ref,event=branch
+            type=ref,event=tag
+            type=ref,event=pr
+            type=sha
+
+  tag-match:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - tag-match: '\d.\d.\d'
+            tag-match-group: '0'
+          - tag-match: '\d.\d'
+            tag-match-group: '0'
+          - tag-match: 'v(.*)'
+            tag-match-group: '1'
+    steps:
+      -
+        name: Checkout
+        uses: actions/checkout@v4
+      -
+        name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          version: ${{ env.BUILDX_VERSION }}
+          driver: docker
+      -
+        name: Docker meta
+        uses: ./
+        with:
+          images: |
+            ${{ env.DOCKER_IMAGE }}
+            ghcr.io/name/app
+          tags: |
+            type=schedule
+            type=ref,event=branch
+            type=ref,event=tag
+            type=ref,event=pr
+            type=match,"pattern=${{ matrix.tag-match }}",group=${{ matrix.tag-match-group }}
+            type=sha
+
+  tag-semver:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        flavor-latest:
+          - "auto"
+          - "true"
+          - "false"
+    steps:
+      -
+        name: Checkout
+        uses: actions/checkout@v4
+      -
+        name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          version: ${{ env.BUILDX_VERSION }}
+          driver: docker
+      -
+        name: Docker meta
+        uses: ./
+        with:
+          images: |
+            ${{ env.DOCKER_IMAGE }}
+            ghcr.io/name/app
+          tags: |
+            type=schedule
+            type=ref,event=branch
+            type=ref,event=tag
+            type=ref,event=pr
+            type=semver,pattern={{raw}}
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}.{{patch}}
+            type=sha
+          flavor: |
+            latest=${{ matrix.flavor-latest }}
+
+  flavor:
+    runs-on: ubuntu-latest
+    steps:
+      -
+        name: Checkout
+        uses: actions/checkout@v4
+      -
+        name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          version: ${{ env.BUILDX_VERSION }}
+          driver: docker
+      -
+        name: Docker meta
+        uses: ./
+        with:
+          images: |
+            ${{ env.DOCKER_IMAGE }}
+            ghcr.io/name/app
+          flavor: |
+            prefix=foo-
+            suffix=-bar
+
+  images:
+    runs-on: ubuntu-latest
+    steps:
+      -
+        name: Checkout
+        uses: actions/checkout@v4
+      -
+        name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          version: ${{ env.BUILDX_VERSION }}
+          driver: docker
+      -
+        name: Docker meta
+        uses: ./
+        with:
+          images: |
+            name=${{ env.DOCKER_IMAGE }}
+            name=ghcr.io/name/app,enable=${{ github.event_name == 'pull_request' }}
+            name=ghcr.io/name/release,enable=${{ startsWith(github.ref, 'refs/tags/') }}
+
+  custom-labels-annotations:
+    runs-on: ubuntu-latest
+    steps:
+      -
+        name: Checkout
+        uses: actions/checkout@v4
+      -
+        name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          version: ${{ env.BUILDX_VERSION }}
+          driver: docker
+      -
+        name: Docker meta
+        uses: ./
+        with:
+          images: |
+            ${{ env.DOCKER_IMAGE }}
+            ghcr.io/name/app
+          labels: |
+            maintainer=CrazyMax
+            org.opencontainers.image.title=MyCustomTitle
+            org.opencontainers.image.description=this is a "good" example
+            org.opencontainers.image.vendor=MyCompany
+          annotations: |
+            maintainer=Foo
+            org.opencontainers.image.title=MyFooTitle
+            org.opencontainers.image.description=this is a "foo" example
+            org.opencontainers.image.vendor=MyFooCompany
+
+  global-exps:
+    runs-on: ubuntu-latest
+    steps:
+      -
+        name: Checkout
+        uses: actions/checkout@v4
+      -
+        name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          version: ${{ env.BUILDX_VERSION }}
+          driver: docker
+      -
+        name: Docker meta
+        uses: ./
+        with:
+          images: |
+            ${{ env.DOCKER_IMAGE }}
+            ghcr.io/name/app
+          labels: |
+            org.opencontainers.image.created={{commit_date 'YYYY-MM-DDTHH:mm:ss.SSS[Z]'}}
+          tags: |
+            type=sha
+            type=raw,value=gexp-branch-{{branch}}
+            type=raw,value=gexp-date-{{date 'YYYYMMDD'}}
+            type=raw,value=gexp-tag-{{tag}}
+            type=raw,value=gexp-baseref-{{base_ref}}
+            type=raw,value=gexp-defbranch,enable={{is_default_branch}}
+
+  json:
+    runs-on: ubuntu-latest
+    steps:
+      -
+        name: Checkout
+        uses: actions/checkout@v4
+      -
+        name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          version: ${{ env.BUILDX_VERSION }}
+          driver: docker
+      -
+        name: Docker meta
+        id: meta
+        uses: ./
+        with:
+          images: |
+            ${{ env.DOCKER_IMAGE }}
+            ghcr.io/name/app
+          labels: |
+            maintainer=CrazyMax
+      -
+        name: JSON output
+        run: |
+          echo "maintainer=${{ fromJSON(steps.meta.outputs.json).labels['maintainer'] }}"
+          echo "version=${{ fromJSON(steps.meta.outputs.json).labels['org.opencontainers.image.version'] }}"
+          echo "revision=${{ fromJSON(steps.meta.outputs.json).labels['org.opencontainers.image.revision'] }}"
+          echo "created=${{ fromJSON(steps.meta.outputs.json).labels['org.opencontainers.image.created'] }}"
+
+  docker-push:
+    runs-on: ubuntu-latest
+    services:
+      registry:
+        image: registry:2
+        ports:
+          - 5000:5000
+    steps:
+      -
+        name: Checkout
+        uses: actions/checkout@v4
+      -
+        name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          version: ${{ env.BUILDX_VERSION }}
+          driver-opts: network=host
+      -
+        name: Docker meta
+        id: docker_meta
+        uses: ./
+        with:
+          images: |
+            ${{ env.DOCKER_IMAGE }}
+          tags: |
+            type=schedule
+            type=ref,event=branch
+            type=ref,event=tag
+            type=ref,event=pr
+            type=semver,pattern=v{{version}}
+            type=semver,pattern=v{{major}}.{{minor}}
+            type=semver,pattern=v{{major}}
+            type=sha
+      -
+        name: Build and push to local registry
+        uses: docker/build-push-action@v6
+        with:
+          context: ./test
+          file: ./test/Dockerfile
+          platforms: linux/amd64,linux/arm64,linux/386
+          push: true
+          tags: ${{ steps.docker_meta.outputs.tags }}
+          labels: ${{ steps.docker_meta.outputs.labels }}
+      -
+        name: Inspect image
+        run: |
+          docker pull ${{ env.DOCKER_IMAGE }}:${{ steps.docker_meta.outputs.version }}
+          docker image inspect ${{ env.DOCKER_IMAGE }}:${{ steps.docker_meta.outputs.version }}
+      -
+        name: Check manifest
+        run: |
+          docker buildx imagetools inspect ${{ env.DOCKER_IMAGE }}:${{ steps.docker_meta.outputs.version }}
+
+  bake:
+    runs-on: ubuntu-latest
+    steps:
+      -
+        name: Checkout
+        uses: actions/checkout@v4
+      -
+        name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          version: ${{ env.BUILDX_VERSION }}
+      -
+        name: Docker meta
+        id: docker_meta
+        uses: ./
+        with:
+          images: |
+            ${{ env.DOCKER_IMAGE }}
+            ghcr.io/name/app
+          tags: |
+            type=schedule
+            type=ref,event=branch
+            type=ref,event=tag
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=sha
+      -
+        name: Build
+        uses: docker/bake-action@v6
+        with:
+          files: |
+            ./test/docker-bake.hcl
+            cwd://${{ steps.docker_meta.outputs.bake-file-tags }}
+            cwd://${{ steps.docker_meta.outputs.bake-file-labels }}
+          targets: |
+            release
+
+  sep-tags:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        sep:
+          - " "
+          - ","
+    steps:
+      -
+        name: Checkout
+        uses: actions/checkout@v4
+      -
+        name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          version: ${{ env.BUILDX_VERSION }}
+          driver: docker
+      -
+        name: Docker meta
+        id: meta
+        uses: ./
+        with:
+          images: |
+            ${{ env.DOCKER_IMAGE }}
+            ghcr.io/name/app
+          sep-tags: ${{ matrix.sep }}
+      -
+        name: Tags
+        uses: actions/github-script@v7
+        with:
+          script: |
+            console.log(`${{ steps.meta.outputs.tags }}`);
+
+  output-env:
+    runs-on: ubuntu-latest
+    steps:
+      -
+        name: Checkout
+        uses: actions/checkout@v4
+      -
+        name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          version: ${{ env.BUILDX_VERSION }}
+          driver: docker
+      -
+        name: Docker meta
+        id: meta
+        uses: ./
+        with:
+          images: |
+            ${{ env.DOCKER_IMAGE }}
+            ghcr.io/name/app
+          labels: |
+            maintainer=CrazyMax
+          annotations: |
+            maintainer=Foo
+      -
+        name: Build
+        uses: docker/build-push-action@v6
+        with:
+          context: ./test
+          file: ./test/output.Dockerfile
+          build-args: |
+            DOCKER_METADATA_OUTPUT_VERSION
+            DOCKER_METADATA_OUTPUT_TAGS
+            DOCKER_METADATA_OUTPUT_LABELS
+            DOCKER_METADATA_OUTPUT_ANNOTATIONS
+            DOCKER_METADATA_OUTPUT_JSON
+
+  no-output-env:
+    runs-on: ubuntu-latest
+    env:
+      DOCKER_METADATA_SET_OUTPUT_ENV: false
+    steps:
+      -
+        name: Checkout
+        uses: actions/checkout@v4
+      -
+        name: Docker meta
+        id: meta
+        uses: ./
+        with:
+          images: |
+            ${{ env.DOCKER_IMAGE }}
+            ghcr.io/name/app
+          labels: |
+            maintainer=CrazyMax
+          annotations: |
+            maintainer=Foo
+      -
+        name: No output environment variables set
+        shell: bash
+        run: |
+          [[ "$(printenv | grep "^DOCKER_METADATA_OUTPUT_" | wc -l)" -eq 0 ]] || exit 1
+
+  bake-annotations:
+    runs-on: ubuntu-latest
+    steps:
+      -
+        name: Checkout
+        uses: actions/checkout@v4
+      -
+        name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          version: ${{ env.BUILDX_VERSION }}
+      -
+        name: Docker meta
+        id: docker_meta
+        uses: ./
+        with:
+          images: |
+            ${{ env.DOCKER_IMAGE }}
+            ghcr.io/name/app
+          tags: |
+            type=schedule
+            type=ref,event=branch
+            type=ref,event=tag
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=sha
+        env:
+          DOCKER_METADATA_ANNOTATIONS_LEVELS: manifest,index
+      -
+        name: Build
+        uses: docker/bake-action@v6
+        with:
+          files: |
+            ./test/docker-bake.hcl
+            cwd://${{ steps.docker_meta.outputs.bake-file-tags }}
+            cwd://${{ steps.docker_meta.outputs.bake-file-annotations }}
+          targets: |
+            release
+
+  no-images:
+    runs-on: ubuntu-latest
+    steps:
+      -
+        name: Checkout
+        uses: actions/checkout@v4
+      -
+        name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          version: ${{ env.BUILDX_VERSION }}
+          driver: docker
+      -
+        name: Docker meta
+        uses: ./
+        with:
+          tags: |
+            type=schedule
+            type=ref,event=branch
+            type=ref,event=tag
+            type=ref,event=pr
+            type=sha
+      -
+        name: Print envs
+        run: env|sort
+
+  bake-path-context:
+    runs-on: ubuntu-latest
+    steps:
+      -
+        name: Checkout
+        uses: actions/checkout@v4
+      -
+        name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          version: latest
+      -
+        name: Docker meta
+        id: docker_meta
+        uses: ./
+      -
+        name: Build
+        uses: docker/bake-action@v6
+        with:
+          source: .
+          files: |
+            ./test/docker-bake.hcl
+            ${{ steps.docker_meta.outputs.bake-file-tags }}
+            ${{ steps.docker_meta.outputs.bake-file-labels }}
+          targets: |
+            release
+
+  sha-short:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        short-length:
+          - ''
+          - 16
+    steps:
+      -
+        name: Checkout
+        uses: actions/checkout@v4
+      -
+        name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          version: ${{ env.BUILDX_VERSION }}
+          driver: docker
+      -
+        name: Docker meta
+        uses: ./
+        with:
+          images: |
+            ${{ env.DOCKER_IMAGE }}
+            ghcr.io/name/app
+          tags: |
+            type=sha
+        env:
+          DOCKER_METADATA_SHORT_SHA_LENGTH: ${{ matrix.short-length }}
+
+  dump:
+    runs-on: ubuntu-latest
+    steps:
+      -
+        name: Checkout
+        uses: actions/checkout@v4
+      -
+        name: Dump context
+        uses: crazy-max/ghaction-dump-context@v2
